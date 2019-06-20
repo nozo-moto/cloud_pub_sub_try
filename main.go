@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"time"
+	"os"
 
 	"cloud.google.com/go/pubsub"
 )
@@ -19,14 +19,14 @@ const (
 )
 
 func init() {
-	pubsubProjectID = os.GetEnv("PUBSUB_PROJECT_ID")
+	pubsubProjectID = os.Getenv("PUBSUB_PROJECT_ID")
 	if pubsubProjectID == "" {
-		pubsubProjectID = "jin-infra"
+		pubsubProjectID = "<>"
 	}
 
-	pubsubTopicID = os.GetEnv("PUBSUB_TOPIC_ID")
+	pubsubTopicID = os.Getenv("PUBSUB_TOPIC_ID")
 	if pubsubTopicID == "" {
-		pubsubTopicID = "projects/jin-infra/topics/dev_topic"
+		pubsubTopicID = "<>"
 	}
 }
 
@@ -38,15 +38,15 @@ type Message struct {
 func main() {
 	var err error
 	var exists bool
-	psClient, err := pubsub.NewClient(ctx, projectID)
+
+	ctx := context.Background()
+	psClient, err := pubsub.NewClient(ctx, pubsubProjectID)
 	if err != nil {
 		panic(err)
 	}
 
-	ctx := context.Background()
-
 	topic := psClient.Topic(pubsubTopicID)
-	exists, err = topic.Exists()
+	exists, err = topic.Exists(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -57,8 +57,8 @@ func main() {
 		}
 	}
 
-	subscription = psClient.Subscription(subscriptionName)
-	exists, err = subscription.Exists()
+	subscription := psClient.Subscription(subscriptionName)
+	exists, err = subscription.Exists(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -69,9 +69,11 @@ func main() {
 		}
 	}
 
+	log.Println("Finished Init")
+
 	// subscribe
 	go func() {
-		//	subscription.
+		log.Println("Run Subscription")
 		for {
 			ctx := context.Background()
 			err := subscription.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
@@ -81,26 +83,33 @@ func main() {
 					return
 				}
 
-				log.Println("message", message.ID, message.Text)
-			})
+				log.Println("subscription", message.ID, message.Text)
 
-			time.Sleep(time.Second * 1)
+				msg.Ack()
+			})
+			if err != nil {
+				panic(err)
+			}
+
 		}
 	}()
 
 	// publish
 	go func() {
+		log.Println("Run Publisher")
 		for i := 0; i < 10; i++ {
 			ctx := context.Background()
-			b, err := json.Marshal(Message{ID: i, Text: "this is test publish."})
+			message := Message{ID: int64(i), Text: "this is test publish."}
+			b, err := json.Marshal(message)
 			if err != nil {
 				panic(err)
 			}
 
-			_, err := topic.Publish(ctx, &pubsub.Message{Data: b})
+			_, err = topic.Publish(ctx, &pubsub.Message{Data: b}).Get(ctx)
 			if err != nil {
 				panic(err)
 			}
+			log.Println("publish", message.ID, message.Text)
 		}
 	}()
 
